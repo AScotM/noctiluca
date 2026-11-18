@@ -329,6 +329,31 @@ func render(s *State, opt Options) string {
 	fmt.Fprintf(&b, "NOCTILUCA  %s  tick %d  organisms %d  coherence %.3f  luminance %.4f  births %d  deaths %d\n", s.Config.Mode, m.Tick, m.Population, m.Order, m.Luminosity, m.Births, m.Deaths)
 	return b.String()
 }
+
+type Screen struct {
+	Previous []string
+}
+
+func (screen *Screen) Draw(frame string) error {
+	lines := strings.Split(strings.TrimSuffix(frame, "\n"), "\n")
+	var out strings.Builder
+	for y, line := range lines {
+		if y < len(screen.Previous) && screen.Previous[y] == line {
+			continue
+		}
+		fmt.Fprintf(&out, "\x1b[%d;1H\x1b[2K%s\x1b[0m", y+1, line)
+	}
+	for y := len(lines); y < len(screen.Previous); y++ {
+		fmt.Fprintf(&out, "\x1b[%d;1H\x1b[2K", y+1)
+	}
+	screen.Previous = lines
+	if out.Len() == 0 {
+		return nil
+	}
+	_, err := os.Stdout.WriteString(out.String())
+	return err
+}
+
 func save(path string, s *State) error {
 	if path == "" {
 		return nil
@@ -473,9 +498,10 @@ func mainRun() error {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
+	var screen Screen
 	if !o.Quiet {
-		fmt.Print("\x1b[?25l")
-		defer fmt.Print("\x1b[0m\x1b[?25h\n")
+		fmt.Print("\x1b[?1049h\x1b[?25l")
+		defer fmt.Print("\x1b[0m\x1b[?25h\x1b[?1049l")
 	}
 	duration := time.Second / time.Duration(o.FPS)
 	done := false
@@ -495,7 +521,9 @@ func mainRun() error {
 			cw.Write([]string{strconv.Itoa(m.Tick), fmt.Sprintf("%.4f", m.Time), strconv.Itoa(m.Population), fmt.Sprintf("%.6f", m.Order), fmt.Sprintf("%.6f", m.MeanEnergy), fmt.Sprintf("%.6f", m.MeanSpeed), fmt.Sprintf("%.6f", m.Luminosity), strconv.Itoa(m.Births), strconv.Itoa(m.Deaths)})
 		}
 		if !o.Quiet {
-			fmt.Print("\x1b[H\x1b[2J", render(s, o))
+			if e = screen.Draw(render(s, o)); e != nil {
+				return e
+			}
 		}
 		if o.SaveEvery > 0 && s.Tick%o.SaveEvery == 0 {
 			if e = save(o.Output, s); e != nil {
